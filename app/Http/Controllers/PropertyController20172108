@@ -1,0 +1,214 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use App\Models\Property;
+use App\Models\Location;
+use App\Models\Developer;
+use App\Models\Gallery;
+use App\Models\GalleryImage;
+use App\Models\Promonewproject;
+use App\Models\File;
+use App\Models\SpecialProperty;
+use View;
+use Validator;
+use Form;
+use Input;
+use Session;
+use \Carbon\Carbon;
+
+class PropertyController extends Controller
+{
+    public function index()
+    {
+        return view::make('admin.prop_add')->render();
+    }
+
+    public function save(Request $r)
+    {
+        $inputs = $r->except('_token');
+        $rules = [
+                    'prop_name' => 'required|max:100',
+                    'prop_location' => 'required',
+                    'prop_type' => 'required',
+                    'prop_content' => 'required',
+                    'prop_featured_image' => 'required',
+                    'prop_gallery' => 'required',
+                    'prop_meta_desc' => 'required',
+                    'prop_meta_title' => 'required|max:50',
+                ];
+        $message = [
+                        'prop_name.required' => 'Please Fill up this field it is required',
+                        'prop_location.required' => 'Please Fill up this field it is required',
+                        'prop_type.required' => 'Please Fill up this field it is required',
+                        'prop_content.required' => 'Please Fill up this field it is required',
+                        'prop_featured_image.required' => 'Please Select an Image',
+                        'prop_gallery.required' => 'Please Fill up this field it is required',
+                        'prop_meta_desc.required' => 'Please Fill up this field it is required',
+                        'prop_meta_title.required' => 'Please Fill up this field it is required',
+                        'prop_name.max' => 'You Have Exceeded the maximum characters allowed( 100 characters)',
+                        'prop_meta_desc.max' => 'You Have Exceeded the maximum characters allowed( 150 characters)',
+                        'prop_meta_title.max' => 'You Have Exceeded the maximum characters allowed( 50 characters)'
+
+                    ];
+        $validator = Validator::make($inputs,$rules,$message);
+        if (!$validator->fails()) {
+            if(isset($inputs['prop_id'])){
+                if(Property::where('prop_id',$inputs['prop_id'])->update($inputs)){
+                    Session::flash('success','Property Updated Successfuly');
+                        return redirect('admin/prop');
+                    }else{
+                        Session::flash('success','Something Went Wrong Please Try Again');
+                        $r->flash();
+                        return View::make('admin.prop_add');
+                    }
+
+            }else{
+                $inputs['prop_slug'] = $inputs['prop_slug'] . rand(000000,999999);
+                $inputs['prop_code'] = 'NLDP-' . rand(000000,999999);
+                    if (Property::insert($inputs)) {
+
+                        Session::flash('success','Property Added Successfuly');
+                        return redirect('admin/prop');
+                    }else{
+                        Session::flash('success','Something Went Wrong Please Try Again. If you did not change anyting this error will pop up please check your inputs');
+                        $r->flash();
+                        return View::make('admin.prop_add');
+                    }
+            }
+        }else{
+            $r->flash();
+            return View::make('admin.prop_add')->withErrors($validator);
+        }
+    }
+    public function edit($id)
+    {
+        $data['data'] = Property::where('prop_id',$id)->first(); 
+
+        return View::make('admin.prop_add',$data)->render();
+    }
+    public function view(Property $prop,SpecialProperty $sprop,Promonewproject $prom, $id,$preview=null)
+    {
+
+        if ($prop->isActive($id) || !is_null($preview)) {
+            $data['data'] =Property::where('prop_slug',$id)->first();
+            $data['data']->prop_loc = Location::where('loc_id',$data['data']->prop_location)->pluck('loc_name')->first();
+            $data['data']->img = GalleryImage::where('img_id',$data['data']->prop_featured_image)->pluck('img_path')->first();
+            if($data['data']->prop_file_ids){
+                $filepaths = [];
+                $fileids = explode(',', $data['data']->prop_file_ids);
+                for ($counter=0; $counter < sizeof($fileids)-1; $counter++) { 
+                    if($filedetail = File::where('file_id',$fileids[$counter])->first()){
+                        $filepaths[$filedetail->file_name] = $filedetail->file_path;
+                    }
+                }
+                $data['data']->prop_files = $filepaths;
+            }
+            //gallery
+            $imgpaths = Gallery::where('gal_id',$data['data']->prop_gallery)->pluck('gal_image_ids')->first();
+            $imgpaths = explode(',', $imgpaths);
+            for ($i=0; $i < sizeof($imgpaths)-1; $i++) { 
+                $img = GalleryImage::where('img_id',$imgpaths[$i])->pluck('img_path')->first();
+                $parths = explode('/', $img);
+                if(file_exists($parths[0] . '/thumbs/' . $parths[1])){
+                    $thumb_file = $parths[0] . '/thumbs/' . $parths[1];
+                }else{
+                    $thumb_file = $img;
+                }
+                 $paths[$i]['thumbs'] =  $thumb_file;
+                 $paths[$i]['retina'] =  $img;
+            }
+            $data['data']->images = $paths;
+            //floor plan
+            $floorimg = Gallery::where('gal_id',$data['data']->prop_floorplan)->pluck('gal_image_ids')->first();
+            if (!is_null($floorimg)) {
+                # code...
+            $floorimg = explode(',', $floorimg);
+            for ($i=0; $i < sizeof($floorimg)-1; $i++) { 
+                $img = GalleryImage::where('img_id',$floorimg[$i])->pluck('img_path')->first();
+                $parths = explode('/', $img);
+                if(file_exists($parths[0] . '/thumbs/' . $parths[1])){
+                    $thumb_file = $parths[0] . '/thumbs/' . $parths[1];
+                }else{
+                    $thumb_file = $img;
+                }
+                 $floorpaths[$i]['thumbs'] =  $thumb_file;
+                 $floorpaths[$i]['retina'] =  $img;
+            }
+            $data['data']->fpimages = $floorpaths;
+            }
+            //checking if its new or has a promo
+            //
+            $pronew = $sprop->where('sprop_properties','like','%'. $data['data']->prop_code .'%')->first();
+            if(sizeof($pronew)){
+                $data['pronew'] = $prom->where('pronew_properties','like','%'.$pronew->sprop_slug.'%')->where('pronew_status',1)->first();
+                if (!$data['pronew']) {
+                    $data['pronew'] = $prom->where('pronew_properties','like','%'.$id.'%')->where('pronew_status',1)->first();
+                }
+            }else{
+                $data['pronew'] = $prom->where('pronew_properties','like','%'.$id.'%')->where('pronew_status',1)->first();
+            }
+            //developer data construction
+            $data['data']->dev_det = Developer::where('dev_id',$data['data']->prop_developer)->first();
+            if ($data['data']->dev_det) {
+                $data['data']->dev_det->dev_img = GalleryImage::where('img_id',$data['data']->dev_det->dev_image)->pluck('img_path')->first();
+            }
+            $carb = new Carbon;
+            $date = $carb->parse($data['data']->prop_date_fin);
+            $data['data']->finished = ($carb->now()->diffInDays($date,false) <= 0) ? 1 : 0 ;
+             $data['data']->prop_date_fin = 'Q' . $date->quarter . ' ' . $date->year;
+            //simillar projects
+            $data['similar'] = $prop->groupBy('prop_name')
+                                    ->Where('prop_location',$data['data']->prop_location)
+                                    ->whereIn('prop_status',[1])
+                                    ->where('prop_slug','<>',$data['data']->prop_slug)
+                                    ->limit(4)->get();
+            foreach ($data['similar'] as $key => $value) {
+                $data['similar'][$key]->prop_loc = Location::where('loc_id',$data['similar'][$key]->prop_location)->pluck('loc_name')->first();
+                $img = GalleryImage::where('img_id',$data['similar'][$key]->prop_featured_image)->pluck('img_path')->first();
+                $parths = explode('/', $img);
+                if(file_exists($parths[0] . '/thumbs/' . $parths[1])){
+                    $thumb_file = $parths[0] . '/thumbs/' . $parths[1];
+                }else{
+                    $thumb_file = $img;
+                }
+                $data['similar'][$key]->img = $thumb_file;
+                $data['similar'][$key]->dev = Developer::where('dev_id',$value->prop_developer)->pluck('dev_name')->first();
+                $data['similar'][$key]->dev_slug = 'developer/' . Developer::where('dev_id',$value->prop_developer)->pluck('dev_slug')->first();
+                $data['similar'][$key]->slug = 'property/' . $data['similar'][$key]->prop_slug;
+            }
+            //no similar properties get latest projects
+            if(sizeof($data['similar']) < 1){
+                $data['rec'] = $prop->groupBy('prop_name')->orderBy('prop_date_up','desc')->where('prop_slug','<>',$data['data']->prop_slug)->limit(4)->get();
+                foreach ($data['rec'] as $key => $value) {
+                    $data['rec'][$key]->prop_loc = Location::where('loc_id',$data['rec'][$key]->prop_location)->pluck('loc_name')->first();
+                    $img = GalleryImage::where('img_id',$data['rec'][$key]->prop_featured_image)->pluck('img_path')->first();
+                    $parths = explode('/', $img);
+                    if(file_exists($parths[0] . '/thumbs/' . $parths[1])){
+                        $thumb_file = $parths[0] . '/thumbs/' . $parths[1];
+                    }else{
+                        $thumb_file = $img;
+                    }
+                    $data['rec'][$key]->img = $thumb_file;
+                    $data['rec'][$key]->dev = Developer::where('dev_id',$value->prop_developer)->pluck('dev_name')->first();
+                    $data['rec'][$key]->dev_slug = 'developer/' . Developer::where('dev_id',$value->prop_developer)->pluck('dev_slug')->first();
+                    $data['rec'][$key]->slug = 'property/' . $data['rec'][$key]->prop_slug;
+                }
+            }
+            $data['data']->prop_content = str_replace('[payplan:', '<div class="sector"><p style="font-size: 30px;font-weight: 700;" class="text-center marg-bottom">Payment Plan</p>', $data['data']->prop_content);
+            $data['data']->prop_content = str_replace('/payplan:]', '<h5 class="text-center marg-bottom">*Payment Plans are subject to change whitout prior notice</h5></div>', $data['data']->prop_content);
+            $data['data']->prop_content = explode('[breakhere]',$data['data']->prop_content);
+            return View::make('properties.page',$data);
+        }else{
+            return View::make('errors.404');
+        }
+    }
+
+    public function delete($id)
+    {
+        Property::where('prop_id',$id)->update(['prop_status'=>4]);
+        Session::flash('success','Property Deleted Successfuly');
+        return redirect('admin/prop');
+    }
+}
